@@ -31,6 +31,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from
     "lib/chainlink-brownie-contracts/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title DSCEngine
@@ -166,7 +167,7 @@ contract DSCEngine is ReentrancyGuard, Ownable {
         }
     }
 
-    function depositCollateralForDsc() external {}
+    // function depositCollateralForDsc() external {}
 
     // in order to redeem collatera:
     // health factor greater 1 After COLLATERAL pulled out
@@ -203,6 +204,8 @@ contract DSCEngine is ReentrancyGuard, Ownable {
         s_dscMinted[msg.sender] += amountDscToMint;
         _revertIfHealthFactorIsBroken(msg.sender);
         bool minted = s_dsc.mint(msg.sender, amountDscToMint);
+        console.log("mint - MSG.SENDER: ", msg.sender);
+        console.log("mint - Minted: ", s_dsc.balanceOf(msg.sender));
         if (!minted) {
             revert DSCEngine__MintFailed();
         }
@@ -279,7 +282,10 @@ contract DSCEngine is ReentrancyGuard, Ownable {
         // should revert because of safeMath if 100 - 10000
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
-
+        console.log("redeem - FROM: ", from);
+        console.log("redeem - TO: ", to);
+        console.log("redeem - AMOUNT: ", amountCollateral);
+        console.log("redeem - TOKEN: ", tokenCollateralAddress);
         bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
         if (!success) {
             revert DSCEngine__TransferFailed();
@@ -305,17 +311,19 @@ contract DSCEngine is ReentrancyGuard, Ownable {
         // total DSC mined
         // total collateral VALUE
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
+        if (totalDscMinted == 0) return type(uint256).max;
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATAION_PRECISION;
-        return collateralAdjustedForThreshold / totalDscMinted;
+
+        return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
         // 1. check Health Factor
         uint256 userHealthFactor = _healthFactor(user);
-        if (userHealthFactor < MIN_HEALTH_FACTOR) {
+        // 2. revert if not
+        if (userHealthFactor <= MIN_HEALTH_FACTOR) {
             revert DSCEngine__HealthFactorBelowMinimum();
         }
-        // 2. revert if not
     }
 
     //////////////////////////////////////////

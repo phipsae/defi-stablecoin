@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {DeployDsc} from "script/DeployDsc.s.sol";
 import {DSCEngine} from "src/DSCEngine.sol";
 import {DecentralizedStableCoin} from "src/DecentralizedStableCoin.sol";
@@ -19,14 +19,19 @@ contract DSCEngineTest is Test {
     address wbtc;
 
     address public USER = makeAddr("USER");
-    uint256 public AMOUNT_COLLATERAL = 10 ether;
-    uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
+    uint256 public AMOUNT_COLLATERAL = 100 ether;
+    uint256 public constant STARTING_ERC20_BALANCE = 100 ether;
+    uint256 public constant DSC_MINTED = 100 ether;
+    uint256 public constant DSC_BURNED = 50 ether;
+    uint256 public constant AMOUNT_COLLATERAL_REDEEMED = 10 ether;
 
     function setUp() public {
         deployer = new DeployDsc();
         (dsc, dscEngine, helperConfig) = deployer.run();
         (ethUsdPriceFeed, wbtcUsdPriceFeed, weth,) = helperConfig.activeNetworkConfig();
         ERC20MockOwn(weth).mint(USER, STARTING_ERC20_BALANCE);
+        vm.prank(dscEngine.owner());
+        dscEngine.setDscContractAddress(address(dsc));
     }
 
     /////////////////////////
@@ -96,19 +101,79 @@ contract DSCEngineTest is Test {
         assertEq(AMOUNT_COLLATERAL, expectedDepositAmountValueinUSD);
     }
 
-    function testDepositCollateralAndMintDsc() public {}
+    function testDepositCollateralAndMintDsc() public {
+        uint256 expectedAmountCollateral = 1 ether;
+        uint256 expectedDscToMint = 999 ether;
 
-    // depositCollateralForDsc
+        vm.startPrank(USER);
+        ERC20MockOwn(weth).approve(address(dscEngine), expectedAmountCollateral);
+        // dsc.approve(address(dscEngine), expectedDscToMint);
+        dscEngine.depositCollateralAndMintDsc(weth, expectedAmountCollateral, expectedDscToMint);
+        vm.stopPrank();
+
+        // (uint256 totalDiscMinted, uint256 collateralValueInUsd) = dscEngine.getAccountInformation(USER);
+        // assertEq(totalDiscMinted, expectedDscToMint);
+        // assertEq(collateralValueInUsd, expectedAmountCollateral);
+    }
 
     ////////////////////////////////
     /// Redeem Collateral Tests ///
     ////////////////////////////////
 
-    // redeemCollateral
+    function testRedeemCollateral() public depositedCollateral {
+        (, uint256 beforeDepositedCollateralInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 beforeDepositedCollateral = dscEngine.getTokenAmountFromUsd(weth, beforeDepositedCollateralInUsd);
+
+        vm.prank(USER);
+        dscEngine.redeemCollateral(weth, AMOUNT_COLLATERAL_REDEEMED);
+
+        (, uint256 afterDepositedCollateralInUsd) = dscEngine.getAccountInformation(USER);
+        uint256 afterDepositedCollateral = dscEngine.getTokenAmountFromUsd(weth, afterDepositedCollateralInUsd);
+        assertEq(beforeDepositedCollateral - AMOUNT_COLLATERAL_REDEEMED, afterDepositedCollateral);
+    }
 
     // redeemCollateralForDsc
 
     ///////////////////////
     /// Mint DSC Tests ///
     //////////////////////
+
+    modifier mintedDsc() {
+        vm.startPrank(USER);
+        dscEngine.mintDsc(DSC_MINTED);
+        console.log("DSC_MINTED: ", dsc.balanceOf(address(dscEngine)));
+        vm.stopPrank();
+        _;
+    }
+
+    function testMintDsc() public depositedCollateral mintedDsc {
+        (uint256 afterTotalDscMinted,) = dscEngine.getAccountInformation(USER);
+        assertEq(afterTotalDscMinted, DSC_MINTED);
+    }
+
+    ///////////////////////
+    /// Burn DSC Tests ///
+    //////////////////////
+
+    function testBurnDsc() public depositedCollateral mintedDsc {
+        (uint256 beforeTotalDscMinted, uint256 depositedCollateralInUSD) = dscEngine.getAccountInformation(USER);
+        uint256 expectedDscToBurn = 50 ether;
+
+        console.log("beforeTotalDscMinted: ", beforeTotalDscMinted);
+        console.log("Address User: ", address(USER));
+        console.log("Address DSC: ", address(dsc));
+        console.log("Address DSC Engine: ", address(dscEngine));
+        console.log("depositedCollateralInUSD: ", depositedCollateralInUSD);
+        console.log("BalanceOf", dsc.balanceOf(address(USER)));
+
+        vm.startPrank(USER);
+        ERC20MockOwn(address(dsc)).approve(address(dscEngine), expectedDscToBurn);
+        dscEngine.burnDsc(expectedDscToBurn);
+        vm.stopPrank();
+
+        (uint256 afterTotalDscMinted,) = dscEngine.getAccountInformation(USER);
+        assertEq(afterTotalDscMinted, beforeTotalDscMinted - expectedDscToBurn);
+    }
+
+    function testLiquidate() public {}
 }
